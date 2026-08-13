@@ -1,0 +1,73 @@
+version: '3.8'
+
+networks:
+  agent-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  n8n_data:
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: orchestrator_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./mcp_server/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - agent-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mcp-server:
+    build:
+      context: ./mcp_server
+    container_name: mcp_server
+    ports:
+      - "${MCP_PORT}:8000"
+    environment:
+      - PORT=${MCP_PORT}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    volumes:
+      - ./mcp_server:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - agent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n_orchestrator
+    ports:
+      - "${N8N_PORT}:5678"
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=db
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - agent-network
