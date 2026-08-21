@@ -39,10 +39,11 @@ CREATE TABLE IF NOT EXISTS decision_log (
     id SERIAL PRIMARY KEY,
     trigger_source VARCHAR(100),
     raw_payload JSONB,
-    classified_intent VARCHAR(50),
+    classified_intent VARCHAR(255),
     confidence_score NUMERIC(3, 2),
     routing_action VARCHAR(100),
     escalated BOOLEAN DEFAULT FALSE,
     mcp_tool_calls JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+

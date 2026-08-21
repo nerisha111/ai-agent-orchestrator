@@ -1,12 +1,7 @@
 #generates a ticket inside the postgres table and records an assigned event in the interaction table
 
 from typing import Optional
-
-try:
-    from pydantic import BaseModel, Field
-except ImportError:
-    raise ImportError("pydantic is required. Install it using: pip install pydantic")
-
+from pydantic import BaseModel, Field
 from tools.base import tool
 from db import get_db_cursor
 

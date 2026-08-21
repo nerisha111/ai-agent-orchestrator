@@ -1,0 +1,279 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "incoming-lead-support",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -928,
+        -48
+      ],
+      "id": "09b46eae-3e73-4dae-b41b-e422ed790d21",
+      "name": "Webhook Inbound",
+      "webhookId": "8723c7a2-7137-45bc-af3a-b394880071fe"
+    },
+    {
+      "parameters": {
+        "url": "http://mcp-server:8000/registry/tools",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -688,
+        -48
+      ],
+      "id": "37bfb3d3-8b01-476d-ba84-8b036cf102fa",
+      "name": "Fetch MCP Registry"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Sender: {{ $('Webhook Inbound').first().json.body?.sender || $('Webhook Inbound').first().json.body?.user_name || $('Webhook Inbound').first().json.body?.issue?.user?.login || \"Unknown\" }}\nQuery: {{ ($('Webhook Inbound').first().json.body?.text || (($('Webhook Inbound').first().json.body?.issue?.title || \"\") + \": \" + ($('Webhook Inbound').first().json.body?.issue?.body || \"\")) || \"No text payload\").slice(0, 500) }}\nSource: {{ $('Webhook Inbound').first().json.body?.issue ? \"github\" : ($('Webhook Inbound').first().json.body?.command ? \"slack\" : ($('Webhook Inbound').first().json.body?.source || \"api\")) }}",
+        "options": {
+          "systemMessage": "=You are an autonomous triage and MCP tool dispatch agent.\n\n\n{{ \n  (() => {\n    const data = $('Fetch MCP Registry').first().json;\n    const tools = data?.tools || (Array.isArray(data) ? data : []);\n    return tools.map(t => {\n      const props = t.schema?.properties ? Object.keys(t.schema.properties).map(k => `${k} (${t.schema.properties[k].type || 'string'}${t.schema.required?.includes(k) ? ', required' : ''}): ${t.schema.properties[k].description || ''}`).join(', ') : 'none';\n      return `- Tool: \"${t.name}\"\\n  Description: ${t.description}\\n  Required & Optional Args: { ${props} }`;\n    }).join('\\n\\n');\n  })() \n}}\n\n### Rules:\n1. `tool_name` MUST match an exact tool name from the list above.\n2. In `tool_args`, parameter keys MUST match the exact schema names above (e.g. for \"create_support_ticket\", use `subject`, NOT `title`).\n3. For priority fields, always use lowercase: \"low\", \"medium\", \"high\", or \"critical\".\n4. Assign a `confidence_score` between 0.0 and 1.0.\n5. If no tool matches, set `\"tool_name\": null`.\n6. Output raw JSON only.\n\n### Output JSON Format:\n{\n  \"tool_name\": \"create_support_ticket\",\n  \"tool_args\": {\n    \"subject\": \"Brief subject of the issue\",\n    \"description\": \"Detailed description\",\n    \"priority\": \"high\"\n  },\n  \"confidence_score\": 0.95,\n  \"summary\": \"Brief summary\",\n  \"reasoning\": \"Reason for selection\"\n}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        -448,
+        -48
+      ],
+      "id": "6a800450-b475-4f69-8785-eb151b528f35",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-20b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        176
+      ],
+      "id": "9af2741d-c829-48bb-aea2-e22551e35614",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "1qMfvGwGPMwRh1qY",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ Number((typeof $json.output === 'object' ? $json.output : JSON.parse($json.output || '{}'))?.confidence_score ?? $json.confidence ?? 0.95) }}",
+              "operation": "largerEqual",
+              "value2": 0.7
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        -48
+      ],
+      "id": "7bba26a2-53cf-4e2f-ba39-b2268c12f364",
+      "name": "Confidence Gate"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://mcp-server:8000/tools/{{ (typeof $json.output === 'object' ? $json.output : JSON.parse($json.output)).tool_name }}/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"arguments\": {{ JSON.stringify((typeof $json.output === 'object' ? $json.output : JSON.parse($json.output)).tool_args) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        32,
+        -128
+      ],
+      "id": "63653523-be5b-40c0-8a99-7cd41e8cb85f",
+      "name": "Execute MCP Tool"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "decision_log",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "trigger_source": "={{ $('Webhook Inbound').first().json.body?.issue ? \"github\" : ($('Webhook Inbound').first().json.body?.command ? \"slack\" : \"api\") }}",
+            "raw_payload": "={{ JSON.stringify($('Webhook Inbound').first().json) }}",
+            "classified_intent": "={{ ((typeof $('Confidence Gate').first().json.output === 'object' ? $('Confidence Gate').first().json.output : JSON.parse($('Confidence Gate').first().json.output)).tool_name || \"bug_triage\").slice(0, 50) }}",
+            "confidence_score": "={{ (typeof $('Confidence Gate').first().json.output === 'object' ? $('Confidence Gate').first().json.output : JSON.parse($('Confidence Gate').first().json.output)).confidence_score }}",
+            "routing_action": "={{ (typeof $('Confidence Gate').first().json.output === 'object' ? $('Confidence Gate').first().json.output : JSON.parse($('Confidence Gate').first().json.output)).tool_name }}",
+            "escalated": false,
+            "mcp_tool_calls": "={{ JSON.stringify($json) }}"
+          }
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        272,
+        -128
+      ],
+      "id": "c6695217-0682-4ea6-827a-d83bd66475da",
+      "name": "Log Execution",
+      "credentials": {
+        "postgres": {
+          "id": "v5QDHsDSTy9NfGyF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "decision_log",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "trigger_source": "={{ $('Webhook Inbound').first().json.body?.issue ? \"github\" : ($('Webhook Inbound').first().json.body?.command ? \"slack\" : \"api\") }}",
+            "raw_payload": "={{ JSON.stringify($('Webhook Inbound').first().json) }}",
+            "classified_intent": "={{ ((typeof $json.output === 'object' ? $json.output : JSON.parse($json.output || '{}')).summary || \"unclassified\").slice(0, 50) }}",
+            "confidence_score": "={{ (typeof $json.output === 'object' ? $json.output : JSON.parse($json.output || '{}')).confidence_score }}",
+            "routing_action": "escalate_human_review",
+            "escalated": true,
+            "mcp_tool_calls": null
+          }
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        32,
+        80
+      ],
+      "id": "411321a9-ede4-482f-9d17-6a4bf21b60b2",
+      "name": "Log Escalation",
+      "credentials": {
+        "postgres": {
+          "id": "v5QDHsDSTy9NfGyF",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Inbound": {
+      "main": [
+        [
+          {
+            "node": "Fetch MCP Registry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch MCP Registry": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Confidence Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confidence Gate": {
+      "main": [
+        [
+          {
+            "node": "Execute MCP Tool",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute MCP Tool": {
+      "main": [
+        [
+          {
+            "node": "Log Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "c96184e9c73110ff841fa8dd362b23e4b0a56fb6dbfa8b67e0ab632a82eb0843"
+  }
+}
