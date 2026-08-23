@@ -35,7 +35,7 @@
         "promptType": "define",
         "text": "=Sender: {{ $('Webhook Inbound').first().json.body?.sender || $('Webhook Inbound').first().json.body?.user_name || $('Webhook Inbound').first().json.body?.issue?.user?.login || \"Unknown\" }}\nQuery: {{ ($('Webhook Inbound').first().json.body?.text || (($('Webhook Inbound').first().json.body?.issue?.title || \"\") + \": \" + ($('Webhook Inbound').first().json.body?.issue?.body || \"\")) || \"No text payload\").slice(0, 500) }}\nSource: {{ $('Webhook Inbound').first().json.body?.issue ? \"github\" : ($('Webhook Inbound').first().json.body?.command ? \"slack\" : ($('Webhook Inbound').first().json.body?.source || \"api\")) }}",
         "options": {
-          "systemMessage": "=You are an autonomous triage and MCP tool dispatch agent.\n\n\n{{ \n  (() => {\n    const data = $('Fetch MCP Registry').first().json;\n    const tools = data?.tools || (Array.isArray(data) ? data : []);\n    return tools.map(t => {\n      const props = t.schema?.properties ? Object.keys(t.schema.properties).map(k => `${k} (${t.schema.properties[k].type || 'string'}${t.schema.required?.includes(k) ? ', required' : ''}): ${t.schema.properties[k].description || ''}`).join(', ') : 'none';\n      return `- Tool: \"${t.name}\"\\n  Description: ${t.description}\\n  Required & Optional Args: { ${props} }`;\n    }).join('\\n\\n');\n  })() \n}}\n\n### Rules:\n1. `tool_name` MUST match an exact tool name from the list above.\n2. In `tool_args`, parameter keys MUST match the exact schema names above (e.g. for \"create_support_ticket\", use `subject`, NOT `title`).\n3. For priority fields, always use lowercase: \"low\", \"medium\", \"high\", or \"critical\".\n4. Assign a `confidence_score` between 0.0 and 1.0.\n5. If no tool matches, set `\"tool_name\": null`.\n6. Output raw JSON only.\n\n### Output JSON Format:\n{\n  \"tool_name\": \"create_support_ticket\",\n  \"tool_args\": {\n    \"subject\": \"Brief subject of the issue\",\n    \"description\": \"Detailed description\",\n    \"priority\": \"high\"\n  },\n  \"confidence_score\": 0.95,\n  \"summary\": \"Brief summary\",\n  \"reasoning\": \"Reason for selection\"\n}"
+          "systemMessage": "=You are an expert Lead Classification and Support Routing agent.\n\nIncoming Event payload:\nSender: {{ $('Webhook Inbound').item.json.body.sender || $('Webhook Inbound').item.json.body.user_name || $('Webhook Inbound').item.json.body.issue?.user?.login || \"Unknown\" }}\nQuery: {{ $('Webhook Inbound').item.json.body.text || ($('Webhook Inbound').item.json.body.issue?.title + \": \" + $('Webhook Inbound').item.json.body.issue?.body) || \"No text payload\" }}\nSource: {{ $('Webhook Inbound').item.json.body.issue ? \"github\" : ($('Webhook Inbound').item.json.body.command ? \"slack\" : ($('Webhook Inbound').item.json.body.source || \"api\")) }}\n\nAvailable Dynamic Tools in our Registry:\n{{ JSON.stringify($('Fetch MCP Registry').item.json.tools) }}\n\nStrict Confidence Calibration Rules:\n- Tier 1 (Confidence 0.85 to 1.00): Clear business requests (e.g., requests for pricing, software bugs, outages, account creation).\n- Tier 2 (Confidence 0.50 to 0.75): Vague or highly ambiguous business requests (e.g., 'i need help' without details, or 'tell me more' with no context).\n- Tier 3 (Confidence 0.00 to 0.45): Greet-only messages (e.g., 'hello', 'hi'), gibberish, button-testing, system-testing, empty strings, or completely irrelevant text. If you see words like 'testing', 'test', 'random query', or 'button clicks', you MUST score it below 0.40.\n\nInstructions:\n1. Determine whether this event is a 'lead' or a 'support' event.\n2. Score your confidence from 0.0 to 1.0 using the Calibration Rules above. \n3. Recommend the EXACT tool to run from the Available Dynamic Tools list.\n4. Populate 'tool_arguments' using the parameters specified in the tool's validation schema.\n\nYour output must be strict JSON matching this structure (no markdown wrapper, no conversational text):\n{\n  \"intent\": \"lead\" or \"support\",\n  \"confidence\": 0.35, \n  \"reasoning\": \"brief explanation, noting if it triggered the low-confidence rule\",\n  \"recommended_tool\": \"update_crm_record\" or \"create_support_ticket\",\n  \"tool_arguments\": { ... }\n}"
         }
       },
       "type": "@n8n/n8n-nodes-langchain.agent",
@@ -70,20 +70,34 @@
     {
       "parameters": {
         "conditions": {
-          "number": [
-            {
-              "value1": "={{ Number((typeof $json.output === 'object' ? $json.output : JSON.parse($json.output || '{}'))?.confidence_score ?? $json.confidence ?? 0.95) }}",
-              "operation": "largerEqual",
-              "value2": 0.7
-            }
-          ],
-          "combinator": "and",
           "options": {
             "caseSensitive": true,
             "leftValue": "",
             "typeValidation": "strict",
             "version": 1
-          }
+          },
+          "conditions": [
+            {
+              "id": "62f284bd-463b-4795-8f63-a650aa3284d1",
+              "leftValue": "={{ JSON.parse($json.output).confidence }}",
+              "rightValue": 0.7,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "id": "fe628414-6abd-4c0b-aa95-e9ad9eb41e39",
+              "leftValue": "",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
         },
         "options": {}
       },
@@ -99,10 +113,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=http://mcp-server:8000/tools/{{ (typeof $json.output === 'object' ? $json.output : JSON.parse($json.output)).tool_name }}/execute",
+        "url": "=http://mcp-server:8000/tools/{{ (typeof $json.output === 'object' ? $json.output : JSON.parse($json.output)).recommended_tool }}/execute",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"arguments\": {{ JSON.stringify((typeof $json.output === 'object' ? $json.output : JSON.parse($json.output)).tool_args) }}\n}",
+        "jsonBody": "={\n  \"arguments\": {{ JSON.stringify((typeof $json.output === 'object' ? $json.output : JSON.parse($json.output)).tool_arguments) }}\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
