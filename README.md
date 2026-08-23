@@ -1,6 +1,6 @@
 # Autonomous AI Agent Orchestrator
 
-A self-hosted, zero-cost AI automation engine that ingests multi-source customer requests, classifies intent using an LLM, applies real-time confidence arbitration, and executes custom actions using a dynamically discovered Model Context Protocol (MCP) tool registry.
+A self-hosted AI automation engine that ingests multi-source customer requests, classifies intent using an LLM, applies real-time confidence arbitration, and executes custom actions using a dynamically discovered Model Context Protocol (MCP) tool registry.
 
 ---
 
